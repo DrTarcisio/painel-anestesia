@@ -24,7 +24,7 @@ def init_connection():
             return None 
 
         conn = pyodbc.connect(
-            "DRIVER={ODBC Driver 18 for SQL Server};"
+            "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={server};" 
             "PORT=1433;"
             f"DATABASE={database};"
