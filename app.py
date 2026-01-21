@@ -4,27 +4,69 @@ import pandas as pd
 import pyodbc
 import plotly.express as px
 from datetime import datetime, date
+import time
 
 # --- Configuração da Página ---
 st.set_page_config(page_title="Dashboard Cirúrgico", layout="wide")
+
+# --- Função de Login ---
+def check_password():
+    """Retorna True se o usuário estiver logado com sucesso."""
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+
+    if st.session_state['logged_in']:
+        return True
+
+    # Layout da tela de login
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("## 🔒 Acesso Restrito - Clianest")
+        st.caption("Por favor, faça login para acessar os dados cirúrgicos.")
+        
+        # Inputs de usuário e senha
+        user_input = st.text_input("Usuário")
+        pass_input = st.text_input("Senha", type="password")
+        
+        if st.button("Entrar"):
+            # Verifica com as senhas salvas no secrets (ou hardcoded se preferir arriscar)
+            # Usei st.secrets para proteger você de expor a senha no GitHub
+            valida_user = st.secrets["admin_user"]
+            valida_pass = st.secrets["admin_password"]
+
+            if user_input == valida_user and pass_input == valida_pass:
+                st.session_state['logged_in'] = True
+                st.success("Login realizado com sucesso!")
+                time.sleep(1) # Aguarda um pouco para mostrar a mensagem
+                st.rerun() # Recarrega a página para entrar no painel
+            else:
+                st.error("Usuário ou senha incorretos.")
+                
+    return False
+
+# --- Se NÃO estiver logado, para o script aqui ---
+if not check_password():
+    st.stop()
+
+# ==============================================================================
+# DAQUI PARA BAIXO É O SEU DASHBOARD ORIGINAL (SÓ EXECUTA SE ESTIVER LOGADO)
+# ==============================================================================
 
 # --- Conexão (Segura) ---
 @st.cache_resource
 def init_connection():
     try:
-        # Tenta conectar usando secrets (nuvem/local seguro) ou direto (fallback)
+        # Tenta conectar usando secrets
         if "db_server" in st.secrets:
             server = st.secrets["db_server"]
             database = st.secrets["db_name"]
             uid = st.secrets["db_user"]
             pwd = st.secrets["db_password"]
         else:
-            # Caso não tenha secrets configurado, usa valores padrão (cuidado com segurança)
-            # Retorne None ou use variáveis de ambiente aqui se preferir
             return None 
 
         conn = pyodbc.connect(
-            "DRIVER={ODBC Driver 17 for SQL Server};"
+            "DRIVER={ODBC Driver 17 for SQL Server};" # Driver 17 para compatibilidade
             f"SERVER={server};" 
             "PORT=1433;"
             f"DATABASE={database};"
@@ -56,7 +98,7 @@ def load_data(start_date, end_date):
             df['IDADE'] = pd.to_numeric(df['IDADE'], errors='coerce').fillna(0)
             df['VALOR'] = pd.to_numeric(df['VALOR'], errors='coerce').fillna(0)
 
-            # Padronização de Texto (Maiúsculas e sem espaços extras)
+            # Padronização de Texto
             cols_texto = ['HOSPITAL', 'ANESTESISTA', 'NOME_CONVENIO', 'NOME_DO_PACIENTE', 'CIRURGIAO1']
             for col in cols_texto:
                 df[col] = df[col].astype(str).str.upper().str.strip()
@@ -68,21 +110,23 @@ def load_data(start_date, end_date):
             return pd.DataFrame()
     return pd.DataFrame()
 
-# --- Sidebar (Filtros Múltiplos) ---
+# --- Adiciona Botão de Logout na Sidebar ---
+st.sidebar.button("Sair / Logout", on_click=lambda: st.session_state.update(logged_in=False))
+
+# --- Sidebar (Filtros) ---
 st.sidebar.header("Filtros")
 
-# 1. Filtro de Data
+# Filtro de Data
 data_inicial = st.sidebar.date_input("Data Inicial", date(2025, 1, 1))
 data_final = st.sidebar.date_input("Data Final", datetime.now())
 
 if data_inicial > data_final:
     st.sidebar.error("A data inicial não pode ser maior que a final.")
 
-# Carregar dados iniciais
+# Carregar dados
 df = load_data(data_inicial, data_final)
 
 if not df.empty:
-    # Preparar listas únicas (Removi o "Todos" manual, pois o multiselect vazio já faz isso)
     lista_hospitais = sorted(df['HOSPITAL'].unique().tolist())
     lista_convenios = sorted(df['NOME_CONVENIO'].unique().tolist())
     lista_anestesistas = sorted(df['ANESTESISTA'].unique().tolist())
@@ -90,21 +134,16 @@ if not df.empty:
     st.sidebar.markdown("---")
     st.sidebar.caption("Deixe em branco para selecionar TODOS")
 
-    # 2. Seletores Múltiplos (Multiselect)
     sel_hospitais = st.sidebar.multiselect("Hospitais", options=lista_hospitais)
     sel_convenios = st.sidebar.multiselect("Convênios", options=lista_convenios)
     sel_anestesistas = st.sidebar.multiselect("Anestesistas", options=lista_anestesistas)
 
-    # Lógica de Filtragem
     df_filtered = df.copy()
 
-    # Se a lista não estiver vazia, filtra. Se estiver vazia, mantém tudo.
     if sel_hospitais:
         df_filtered = df_filtered[df_filtered['HOSPITAL'].isin(sel_hospitais)]
-    
     if sel_convenios:
         df_filtered = df_filtered[df_filtered['NOME_CONVENIO'].isin(sel_convenios)]
-        
     if sel_anestesistas:
         df_filtered = df_filtered[df_filtered['ANESTESISTA'].isin(sel_anestesistas)]
 
@@ -112,7 +151,6 @@ if not df.empty:
     st.title("📊 Painel Multiselect")
     st.markdown(f"**Período:** {data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}")
 
-    # KPIs
     total_val = df_filtered['VALOR'].sum()
     df_pagantes = df_filtered[df_filtered['VALOR'] > 0]
     ticket_medio = df_pagantes['VALOR'].mean() if not df_pagantes.empty else 0
@@ -124,32 +162,27 @@ if not df.empty:
 
     st.divider()
 
-    # --- Pesquisa Individual ---
     with st.expander("🔍 Pesquisa por Nome", expanded=False):
         nome_busca = st.text_input("Nome do Paciente:")
         if nome_busca:
             df_busca = df_filtered[df_filtered['NOME_DO_PACIENTE'].str.contains(nome_busca.upper())]
             st.dataframe(df_busca, use_container_width=True)
 
-    # --- Gráficos ---
     tab1, tab2, tab3 = st.tabs(["Evolução", "Convênios", "Hospitais"])
 
     with tab1:
-        # Agrupamento Mensal
         df_filtered['Mes'] = df_filtered['DATA_INTERNACAO'].dt.strftime('%Y-%m')
         df_trend = df_filtered.groupby('Mes')['VALOR'].sum().reset_index()
         fig1 = px.bar(df_trend, x='Mes', y='VALOR', title="Evolução Mensal")
         st.plotly_chart(fig1, use_container_width=True)
 
     with tab2:
-        # Top Convênios
         df_conv = df_filtered.groupby('NOME_CONVENIO')['NUMERO_DA_FICHA'].count().reset_index()
         df_conv = df_conv.sort_values('NUMERO_DA_FICHA', ascending=False).head(10)
         fig2 = px.pie(df_conv, values='NUMERO_DA_FICHA', names='NOME_CONVENIO', title="Distribuição por Convênio")
         st.plotly_chart(fig2, use_container_width=True)
 
     with tab3:
-        # Ranking Hospitais
         df_hosp = df_filtered.groupby('HOSPITAL')['VALOR'].sum().reset_index()
         df_hosp = df_hosp.sort_values('VALOR', ascending=False)
         fig3 = px.bar(df_hosp, x='HOSPITAL', y='VALOR', title="Faturamento por Hospital")
@@ -157,11 +190,7 @@ if not df.empty:
 
     st.subheader("Dados Detalhados")
     st.dataframe(df_filtered, use_container_width=True)
+    st.caption("Developed by Tarcisio Buettel, MD")
 
 else:
     st.warning("Nenhum dado encontrado para o período selecionado.")
-# -
-# !streamlit run app.py
-
-
-
